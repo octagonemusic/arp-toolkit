@@ -23,6 +23,8 @@ def main():
     defense_parser.add_argument("--trusted", "-t", nargs=2, action='append',
                               metavar=('IP', 'MAC'), help="Add trusted IP-MAC pair")
     defense_parser.add_argument("--duration", "-d", type=int, help="Duration to monitor in seconds")
+    # Add gateway argument to defense mode - MOVED HERE BEFORE PARSING
+    defense_parser.add_argument("--gateway", "-g", help="Target gateway IP to monitor")
 
     args = parser.parse_args()
 
@@ -37,7 +39,8 @@ def main():
         arp_spoof_attack(args.gateway, args.target, args.interface, args.duration)
 
     elif args.mode == "defense":
-        watchdog = ARPWatchdog(args.interface)
+        # Now we can use args.gateway correctly
+        watchdog = ARPWatchdog(args.interface, target_gateway_ip=args.gateway)
 
         # Add trusted mappings if provided
         if args.trusted:
