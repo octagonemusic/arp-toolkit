@@ -1,0 +1,18 @@
+FROM python:3.9-slim
+
+RUN apt-get update && apt-get install -y \
+    net-tools \
+    iputils-ping \
+    iptables \
+    tcpdump \
+    arping \
+    iproute2 \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Set up this container to act as a gateway
+RUN echo "net.ipv4.ip_forward=1" > /etc/sysctl.conf
+
+CMD ["bash"]

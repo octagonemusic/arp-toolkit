@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ARP Monitor Dashboard</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            body {
+                padding-top: 20px;
+                background-color: #f5f5f5;
+            }
+            .card {
+                margin-bottom: 20px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+            .alert-card {
+                border-left: 4px solid #dc3545;
+            }
+            .status-safe {
+                color: green;
+            }
+            .status-warning {
+                color: orange;
+            }
+            .status-danger {
+                color: red;
+            }
+            .network-node {
+                padding: 15px;
+                border-radius: 10px;
+                display: inline-block;
+                margin: 10px;
+                text-align: center;
+                width: 150px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            }
+            .node-gateway {
+                background-color: #d1e7dd;
+            }
+            .node-victim {
+                background-color: #f8d7da;
+            }
+            .node-attacker {
+                background-color: #f8d7da;
+            }
+            .node-connection {
+                height: 2px;
+                background-color: #6c757d;
+                width: 100px;
+                display: inline-block;
+                position: relative;
+                top: -15px;
+            }
+            #networkMap {
+                text-align: center;
+                margin: 20px 0;
+            }
+            .badge-spoofed {
+                background-color: #dc3545 !important;
+            }
+            .alert-new {
+                animation: highlight 2s ease-in-out;
+            }
+            @keyframes highlight {
+                0% {
+                    background-color: #fff3cd;
+                }
+                100% {
+                    background-color: white;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <header
+                class="d-flex justify-content-between align-items-center pb-3 mb-4 border-bottom"
+            >
+                <h1>ARP Spoofing Monitor</h1>
+                <div>
+                    <span id="statusIndicator" class="badge bg-success"
+                        >Monitoring</span
+                    >
+                    <span id="lastUpdated" class="text-muted small"></span>
+                </div>
+            </header>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div
+                            class="card-header d-flex justify-content-between align-items-center"
+                        >
+                            <h5>Network Status</h5>
+                            <span id="attackStatus" class="badge bg-success"
+                                >No Attack Detected</span
+                            >
+                        </div>
+                        <div class="card-body">
+                            <div id="networkMap">
+                                <!-- Network map will be generated here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h5>Traffic Monitor</h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="trafficChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6">
+                    <div class="card">
+                        <div
+                            class="card-header d-flex justify-content-between align-items-center"
+                        >
+                            <h5>ARP Table</h5>
+                            <span class="badge bg-primary" id="arpEntriesCount"
+                                >0 entries</span
+                            >
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>IP Address</th>
+                                            <th>MAC Address</th>
+                                            <th>Status</th>
+                                            <th>Last Updated</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="arpTableBody">
+                                        <!-- ARP entries will be loaded here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div
+                            class="card-header d-flex justify-content-between align-items-center"
+                        >
+                            <h5>Alerts</h5>
+                            <span class="badge bg-danger" id="alertsCount"
+                                >0 alerts</span
+                            >
+                        </div>
+                        <div class="card-body">
+                            <div id="alertsList">
+                                <!-- Alerts will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // Configuration
+            const API_URL = "/api";
+            const REFRESH_INTERVAL = 2000; // 2 seconds
+            const GATEWAY_IP = "172.29.50.10";
+            const VICTIM_IP = "172.29.50.20";
+            const ATTACKER_IP = "172.29.50.30";
+
+            // State
+            let knownMacs = {};
+            let alertsData = [];
+            let arpTable = {};
+            let trafficData = {
+                labels: [],
+                sent: [],
+                received: [],
+            };
+
+            // Traffic chart
+            const trafficChart = new Chart(
+                document.getElementById("trafficChart"),
+                {
+                    type: "line",
+                    data: {
+                        labels: [],
+                        datasets: [
+                            {
+                                label: "Bytes Sent",
+                                data: [],
+                                borderColor: "rgba(75, 192, 192, 1)",
+                                backgroundColor: "rgba(75, 192, 192, 0.2)",
+                                tension: 0.4,
+                            },
+                            {
+                                label: "Bytes Received",
+                                data: [],
+                                borderColor: "rgba(255, 99, 132, 1)",
+                                backgroundColor: "rgba(255, 99, 132, 0.2)",
+                                tension: 0.4,
+                            },
+                        ],
+                    },
+                    options: {
+                        animation: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                            },
+                        },
+                        plugins: {
+                            legend: {
+                                position: "top",
+                            },
+                        },
+                    },
+                },
+            );
+
+            // Initialize network map
+            function initNetworkMap() {
+                const networkMap = document.getElementById("networkMap");
+                networkMap.innerHTML = `
+                <div class="network-node node-gateway">
+                    <div>Gateway</div>
+                    <div class="small">${GATEWAY_IP}</div>
+                    <div id="gatewayMac" class="small text-muted">Unknown</div>
+                </div>
+                <div class="node-connection"></div>
+                <div class="network-node node-victim">
+                    <div>Victim</div>
+                    <div class="small">${VICTIM_IP}</div>
+                    <div id="victimMac" class="small text-muted">Unknown</div>
+                </div>
+                <div class="node-connection"></div>
+                <div class="network-node node-attacker">
+                    <div>Attacker</div>
+                    <div class="small">${ATTACKER_IP}</div>
+                    <div id="attackerMac" class="small text-muted">Unknown</div>
+                </div>
+            `;
+            }
+
+            // Update network map
+            function updateNetworkMap() {
+                // Update MAC addresses
+                if (arpTable[GATEWAY_IP]) {
+                    document.getElementById("gatewayMac").textContent =
+                        arpTable[GATEWAY_IP].mac;
+                }
+                if (arpTable[VICTIM_IP]) {
+                    document.getElementById("victimMac").textContent =
+                        arpTable[VICTIM_IP].mac;
+                }
+                if (arpTable[ATTACKER_IP]) {
+                    document.getElementById("attackerMac").textContent =
+                        arpTable[ATTACKER_IP].mac;
+                }
+
+                // Check for ARP spoofing evidence
+                const networkMap = document.getElementById("networkMap");
+                let attackInProgress = false;
+
+                // Look for active attack in alerts or suspicious ARP entries
+                if (
+                    alertsData.length > 0 ||
+                    (arpTable[GATEWAY_IP] && arpTable[GATEWAY_IP].suspicious) ||
+                    (arpTable[VICTIM_IP] && arpTable[VICTIM_IP].suspicious)
+                ) {
+                    attackInProgress = true;
+                }
+
+                // Update the network map visualization
+                if (attackInProgress) {
+                    // Show the attack topology
+                    networkMap.innerHTML = `
+                    <div class="network-node node-gateway">
+                        <div>Gateway</div>
+                        <div class="small">${GATEWAY_IP}</div>
+                        <div id="gatewayMac" class="small text-muted">${arpTable[GATEWAY_IP]?.mac || "Unknown"}</div>
+                    </div>
+                    <div class="node-connection"></div>
+                    <div class="network-node node-attacker" style="border: 3px solid red;">
+                        <div>Attacker</div>
+                        <div class="small">${ATTACKER_IP}</div>
+                        <div id="attackerMac" class="small text-muted">${arpTable[ATTACKER_IP]?.mac || "Unknown"}</div>
+                    </div>
+                    <div class="node-connection"></div>
+                    <div class="network-node node-victim">
+                        <div>Victim</div>
+                        <div class="small">${VICTIM_IP}</div>
+                        <div id="victimMac" class="small text-muted">${arpTable[VICTIM_IP]?.mac || "Unknown"}</div>
+                    </div>
+                    <div class="mt-3 alert alert-danger">
+                        <strong>Attack detected!</strong> The attacker has intercepted the communication path.
+                    </div>
+                `;
+                } else {
+                    // Show normal topology
+                    networkMap.innerHTML = `
+                    <div class="network-node node-gateway">
+                        <div>Gateway</div>
+                        <div class="small">${GATEWAY_IP}</div>
+                        <div id="gatewayMac" class="small text-muted">${arpTable[GATEWAY_IP]?.mac || "Unknown"}</div>
+                    </div>
+                    <div class="node-connection"></div>
+                    <div class="network-node node-victim">
+                        <div>Victim</div>
+                        <div class="small">${VICTIM_IP}</div>
+                        <div id="victimMac" class="small text-muted">${arpTable[VICTIM_IP]?.mac || "Unknown"}</div>
+                    </div>
+                    <br><br>
+                    <div class="network-node node-attacker" style="margin-top: 20px;">
+                        <div>Attacker</div>
+                        <div class="small">${ATTACKER_IP}</div>
+                        <div id="attackerMac" class="small text-muted">${arpTable[ATTACKER_IP]?.mac || "Unknown"}</div>
+                    </div>
+                `;
+                }
+            }
+
+            // Render ARP table
+            function renderArpTable() {
+                const tableBody = document.getElementById("arpTableBody");
+                tableBody.innerHTML = "";
+
+                let count = 0;
+                for (const [ip, data] of Object.entries(arpTable)) {
+                    count++;
+                    const row = document.createElement("tr");
+
+                    // Highlight suspicious entries
+                    if (data.suspicious) {
+                        row.classList.add("table-danger");
+                    }
+
+                    row.innerHTML = `
+                    <td>${ip}</td>
+                    <td>${data.mac}</td>
+                    <td>${data.suspicious ? '<span class="badge bg-danger">Suspicious</span>' : '<span class="badge bg-success">Normal</span>'}</td>
+                    <td>${data.last_updated}</td>
+                `;
+                    tableBody.appendChild(row);
+                }
+
+                document.getElementById("arpEntriesCount").textContent =
+                    `${count} entries`;
+            }
+
+            // Render alerts
+            function renderAlerts() {
+                const alertsList = document.getElementById("alertsList");
+                alertsList.innerHTML = "";
+
+                if (alertsData.length === 0) {
+                    alertsList.innerHTML =
+                        '<div class="text-muted">No alerts detected.</div>';
+                    return;
+                }
+
+                // Sort alerts by timestamp, newest first
+                alertsData.sort(
+                    (a, b) => new Date(b.timestamp) - new Date(a.timestamp),
+                );
+
+                alertsData.forEach((alert) => {
+                    const alertElem = document.createElement("div");
+                    alertElem.classList.add(
+                        "alert",
+                        "alert-danger",
+                        "alert-card",
+                        "mb-3",
+                    );
+
+                    // Add highlight animation to new alerts
+                    if (Date.now() - new Date(alert.timestamp) < 5000) {
+                        alertElem.classList.add("alert-new");
+                    }
+
+                    alertElem.innerHTML = `
+                    <div class="d-flex justify-content-between">
+                        <h6 class="alert-heading">ARP Spoofing Detected</h6>
+                        <small>${alert.timestamp}</small>
+                    </div>
+                    <p class="mb-0">${alert.message || "Unknown alert"}</p>
+                `;
+                    alertsList.appendChild(alertElem);
+                });
+
+                document.getElementById("alertsCount").textContent =
+                    `${alertsData.length} alerts`;
+            }
+
+            // Update traffic chart
+            function updateTrafficChart() {
+                if (trafficData.labels.length > 10) {
+                    trafficData.labels = trafficData.labels.slice(-10);
+                    trafficData.sent = trafficData.sent.slice(-10);
+                    trafficData.received = trafficData.received.slice(-10);
+                }
+
+                trafficChart.data.labels = trafficData.labels;
+                trafficChart.data.datasets[0].data = trafficData.sent;
+                trafficChart.data.datasets[1].data = trafficData.received;
+                trafficChart.update();
+            }
+
+            // Fetch data from API
+            async function fetchData() {
+                try {
+                    const response = await fetch(`${API_URL}/status`);
+                    const data = await response.json();
+
+                    // Update state
+                    alertsData = data.alerts;
+                    arpTable = data.arp_table;
+
+                    // Update traffic data
+                    if (data.traffic_stats && data.traffic_stats.length > 0) {
+                        data.traffic_stats.forEach((stat) => {
+                            const time = stat.timestamp.split(" ")[1]; // Just the time portion
+                            trafficData.labels.push(time);
+                            trafficData.sent.push(stat.bytes_sent);
+                            trafficData.received.push(stat.bytes_received);
+                        });
+                    }
+
+                    // Update attack status
+                    if (data.attack_status.ongoing) {
+                        document.getElementById("attackStatus").textContent =
+                            `Attack in Progress!`;
+                        document
+                            .getElementById("attackStatus")
+                            .classList.remove("bg-success");
+                        document
+                            .getElementById("attackStatus")
+                            .classList.add("bg-danger");
+                    } else {
+                        document.getElementById("attackStatus").textContent =
+                            `No Attack Detected`;
+                        document
+                            .getElementById("attackStatus")
+                            .classList.remove("bg-danger");
+                        document
+                            .getElementById("attackStatus")
+                            .classList.add("bg-success");
+                    }
+
+                    // Mark suspicious ARP entries
+                    for (const ip in arpTable) {
+                        if (
+                            alertsData.some(
+                                (alert) =>
+                                    alert.ip === ip &&
+                                    alert.spoofed_mac === arpTable[ip].mac,
+                            )
+                        ) {
+                            arpTable[ip].suspicious = true;
+                        }
+                    }
+
+                    // Update UI
+                    renderArpTable();
+                    renderAlerts();
+                    updateNetworkMap();
+                    updateTrafficChart();
+
+                    // Update last updated timestamp
+                    document.getElementById("lastUpdated").textContent =
+                        `Last updated: ${data.timestamp}`;
+                } catch (error) {
+                    console.error("Error fetching data:", error);
+                    document
+                        .getElementById("statusIndicator")
+                        .classList.remove("bg-success");
+                    document
+                        .getElementById("statusIndicator")
+                        .classList.add("bg-danger");
+                    document.getElementById("statusIndicator").textContent =
+                        "Connection Error";
+                }
+            }
+
+            // Initialize
+            initNetworkMap();
+            fetchData();
+
+            // Set up periodic refresh
+            setInterval(fetchData, REFRESH_INTERVAL);
+        </script>
+    </body>
+</html>
