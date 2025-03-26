@@ -715,7 +715,42 @@
                 trafficChart.update();
             }
 
+            // Function to convert UTC to IST time format
+            function formatISTTime(timestamp) {
+                if (!timestamp) return "Unknown";
+                
+                // Create a date object from the timestamp
+                const date = new Date(timestamp);
+                
+                // Convert to IST (UTC+5:30)
+                const istOffset = 5.5 * 60 * 60 * 1000; // IST offset in milliseconds
+                const istDate = new Date(date.getTime() + istOffset);
+                
+                // Format the date to IST
+                const options = {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                };
+                
+                return new Intl.DateTimeFormat('en-IN', options).format(istDate);
+            }
+
+            // Update the last updated time in header to IST
+            function updateLastUpdated(timestamp) {
+                if (timestamp) {
+                    document.getElementById("lastUpdated").textContent = 
+                        `Last updated: ${formatISTTime(timestamp)}`;
+                }
+            }
+
             // Fetch data from API
+            
             async function fetchData() {
                 try {
                     const response = await fetch(`${API_URL}/status`);
@@ -755,8 +790,7 @@
                     updateTrafficChart();
 
                     // Update last updated timestamp
-                    document.getElementById("lastUpdated").textContent =
-                        `Last updated: ${data.timestamp}`;
+                    updateLastUpdated(data.timestamp);
                 } catch (error) {
                     console.error("Error fetching data:", error);
                     document
