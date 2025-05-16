@@ -1,14 +1,13 @@
-from scapy.all import ARP, sniff, Ether, srp, conf
+from scapy.all import sniff, srp, conf
+from scapy.layers.l2 import ARP, Ether
 import time
-import os
-import sys
 import subprocess
 import threading
+import sys
 
 # Debug dashboard availability
 print("[DEBUG] Looking for dashboard_integration module...")
 try:
-    import sys
     print(f"[DEBUG] Python path: {sys.path}")
     from defense.dashboard_integration import send_alert_to_dashboard, update_arp_table
     DASHBOARD_AVAILABLE = True
@@ -22,6 +21,12 @@ try:
 except ImportError as e:
     DASHBOARD_AVAILABLE = False
     print(f"[-] Dashboard integration not available: {e}")
+    # Define no-op functions when dashboard is not available
+    def send_alert_to_dashboard(alert) -> bool:
+        return False
+    
+    def update_arp_table(ip, mac, suspicious=False) -> bool:
+        return False
 
 def get_mac(ip, interface="eth0"):
     """Get MAC address for an IP using ARP request"""
@@ -61,14 +66,14 @@ class ARPWatchdog:
         # If gateway IP is provided, try to get its MAC immediately
         if self.target_gateway_ip:
             print(f"[*] Target gateway specified: {self.target_gateway_ip}")
-            print(f"[*] Actively probing for gateway MAC...")
+            print("[*] Actively probing for gateway MAC...")
             gateway_mac = get_mac(self.target_gateway_ip, interface)
             if gateway_mac:
                 print(f"[+] Gateway MAC discovered: {gateway_mac}")
                 self.add_trusted_mapping(self.target_gateway_ip, gateway_mac)
             else:
                 print(f"[!] Could not get MAC for gateway {self.target_gateway_ip}")
-                print(f"[!] Will learn it from traffic")
+                print("[!] Will learn it from traffic")
 
     def add_trusted_mapping(self, ip, mac):
         """Add a trusted IP-MAC mapping"""
@@ -235,11 +240,11 @@ class ARPWatchdog:
             if self.target_gateway_ip in self.ip_mac_mapping:
                 print(f"[+] Successfully learned gateway MAC: {self.ip_mac_mapping[self.target_gateway_ip]}")
             else:
-                print(f"[!] Still couldn't get gateway MAC - will keep watching")
+                print("[!] Still couldn't get gateway MAC - will keep watching")
 
                 # Make one more attempt with system ping to populate ARP table
                 try:
-                    print(f"[*] Pinging gateway to populate ARP table...")
+                    print("[*] Pinging gateway to populate ARP table...")
                     subprocess.run(["ping", "-c", "1", self.target_gateway_ip],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     self._check_arp_table()  # Check ARP table again

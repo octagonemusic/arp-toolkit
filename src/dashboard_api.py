@@ -2,7 +2,6 @@ from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 import threading
 import time
-import json
 import os
 import subprocess
 from datetime import datetime
@@ -56,7 +55,7 @@ def get_packets():
 # Update endpoints (could be secured with authentication in production)
 @app.route('/api/update_alert', methods=['POST'])
 def update_alert():
-    alert = request.json
+    alert = request.json or {}
     alert["id"] = len(network_state.alerts) + 1
     alert["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     network_state.alerts.append(alert)
@@ -64,7 +63,7 @@ def update_alert():
 
 @app.route('/api/update_arp', methods=['POST'])
 def update_arp():
-    data = request.json
+    data = request.json or {}
     ip = data.get("ip")
     mac = data.get("mac")
     if ip and mac:
@@ -77,7 +76,12 @@ def update_arp():
 
 @app.route('/api/set_attack_status', methods=['POST'])
 def set_attack_status():
-    network_state.attack_status = request.json
+    data = request.json or {"ongoing": False, "attacker": None, "target": None}
+    network_state.attack_status = {
+        "ongoing": data.get("ongoing", False),
+        "attacker": data.get("attacker"),
+        "target": data.get("target")
+    }
     return jsonify({"status": "success"})
 
 # Background thread to simulate ARP table updates from sniffing

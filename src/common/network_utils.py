@@ -1,7 +1,4 @@
 import netifaces
-import socket
-import struct
-import fcntl
 
 def get_interface():
     """Find the primary network interface (non-loopback)"""

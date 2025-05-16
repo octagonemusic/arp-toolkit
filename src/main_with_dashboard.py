@@ -5,6 +5,7 @@ import time
 import os
 import subprocess
 import traceback
+import typing
 
 # Add parent directory to Python path
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +15,8 @@ if parent_dir not in sys.path:
 # Try importing Flask to check if it's available
 FLASK_AVAILABLE = False
 try:
-    import flask
+    # We need to check if Flask is available, but don't need to use the import directly
+    _flask_check = __import__('flask')
     FLASK_AVAILABLE = True
     print("[+] Flask is available - dashboard can be used")
 except ImportError:
@@ -33,7 +35,7 @@ except ImportError as e:
         from src.attack.arp_spoof import arp_spoof_attack
         from src.defense.arp_detection import ARPWatchdog
         print("[+] ARP toolkit modules imported successfully")
-    except ImportError as e2:
+    except ImportError:
         print(f"[!] Error importing ARP toolkit modules: {e}")
         traceback.print_exc()
         sys.exit(1)
@@ -43,9 +45,9 @@ try:
     from src.common.network_utils import get_interface, get_interface_ip, get_interface_mac
 except ImportError:
     print("[!] Error importing network utilities, using fallbacks")
-    def get_interface(): return "eth0"
-    def get_interface_ip(iface): return None
-    def get_interface_mac(iface): return None
+    def get_interface() -> str: return "eth0"
+    def get_interface_ip(interface) -> typing.Optional[str]: return None
+    def get_interface_mac(interface) -> typing.Optional[str]: return None
 
 def start_dashboard_server():
     """Start the dashboard server in a separate process"""
@@ -78,12 +80,12 @@ def start_dashboard_server():
         time.sleep(2)
 
         if dashboard_process.poll() is None:
-            print(f"[+] Dashboard server running at http://localhost:8080")
+            print("[+] Dashboard server running at http://localhost:8080")
             return dashboard_process
         else:
-            stderr = dashboard_process.stderr.read().decode('utf-8')
-            stdout = dashboard_process.stdout.read().decode('utf-8')
-            print(f"[!] Failed to start dashboard server:")
+            stderr = dashboard_process.stderr.read().decode('utf-8') if dashboard_process.stderr else ""
+            stdout = dashboard_process.stdout.read().decode('utf-8') if dashboard_process.stdout else ""
+            print("[!] Failed to start dashboard server:")
             print(f"STDERR: {stderr}")
             print(f"STDOUT: {stdout}")
             return None
@@ -93,7 +95,8 @@ def start_dashboard_server():
         traceback.print_exc()
         return None
 
-def main():
+def setup_argument_parser():
+    """Set up and configure the argument parser"""
     parser = argparse.ArgumentParser(description="ARP Spoofing Tool")
 
     # Create subparsers for different modes
@@ -119,6 +122,83 @@ def main():
     dashboard_parser = subparsers.add_parser("dashboard", help="Start dashboard only")
     dashboard_parser.add_argument("--port", "-p", type=int, default=8080, help="Port for dashboard server")
 
+    return parser
+
+def run_dashboard_mode(dashboard_process):
+    """Run in dashboard-only mode"""
+    if dashboard_process:
+        print("[*] Dashboard server is running. Press Ctrl+C to stop.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("[*] Stopping dashboard server...")
+            dashboard_process.terminate()
+
+def run_attack_mode(args):
+    """Execute attack mode operations"""
+    print(f"[*] Starting ARP spoofing attack against {args.target} via {args.gateway}")
+    print(f"[*] Using interface: {args.interface}")
+    try:
+        arp_spoof_attack(args.gateway, args.target, args.interface, args.duration)
+    except Exception as e:
+        print(f"[!] Error during attack: {e}")
+        traceback.print_exc()
+
+def setup_trusted_mappings(watchdog, args):
+    """Set up trusted IP-MAC mappings for the ARP watchdog"""
+    if args.trusted:
+        for ip, mac in args.trusted:
+            watchdog.add_trusted_mapping(ip, mac)
+    else:
+        # If no trusted mappings provided, let's add our own interface
+        my_ip = get_interface_ip(args.interface)
+        my_mac = get_interface_mac(args.interface)
+        if my_ip and my_mac:
+            watchdog.add_trusted_mapping(my_ip, my_mac)
+            print(f"[*] Added own interface as trusted: {my_ip} -> {my_mac}")
+
+def report_alerts(alerts):
+    """Report detected ARP spoofing alerts"""
+    if alerts:
+        print(f"\n[!] Detected {len(alerts)} potential ARP spoofing attempts:")
+        for alert in alerts:
+            print(f"  - {alert['message']}")
+    else:
+        print("\n[✓] No ARP spoofing detected.")
+
+def run_defense_mode(args):
+    """Execute defense mode operations"""
+    try:
+        watchdog = ARPWatchdog(args.interface)
+        setup_trusted_mappings(watchdog, args)
+        
+        # Start monitoring
+        watchdog.start_monitoring(args.duration)
+        
+        # After monitoring ends or is interrupted, print summary
+        report_alerts(watchdog.get_alerts())
+    except Exception as e:
+        print(f"[!] Error during defense mode: {e}")
+        traceback.print_exc()
+
+def setup_dashboard(args):
+    """Set up dashboard if requested"""
+    dashboard_process = None
+    
+    if (args.mode in ["attack", "defense"] and hasattr(args, 'dashboard') and args.dashboard) or args.mode == "dashboard":
+        if not FLASK_AVAILABLE:
+            print("[!] Dashboard requested but Flask is not installed")
+            print("    Install with: pip install flask flask-cors")
+            if args.mode == "dashboard":
+                return None, True  # Exit flag if dashboard-only mode
+        else:
+            dashboard_process = start_dashboard_server()
+    
+    return dashboard_process, False
+
+def main():
+    parser = setup_argument_parser()
     args = parser.parse_args()
 
     if not args.mode:
@@ -131,69 +211,20 @@ def main():
         print(f"[*] Using auto-detected interface: {args.interface}")
 
     # Handle dashboard server for all modes
-    dashboard_process = None
-
-    if (args.mode in ["attack", "defense"] and hasattr(args, 'dashboard') and args.dashboard) or args.mode == "dashboard":
-        if not FLASK_AVAILABLE:
-            print("[!] Dashboard requested but Flask is not installed")
-            print("    Install with: pip install flask flask-cors")
-            if args.mode == "dashboard":
-                return  # Exit if dashboard-only mode
-        else:
-            dashboard_process = start_dashboard_server()
+    dashboard_process, should_exit = setup_dashboard(args)
+    if should_exit:
+        return
 
     # Dashboard-only mode
     if args.mode == "dashboard":
-        if dashboard_process:
-            print("[*] Dashboard server is running. Press Ctrl+C to stop.")
-            try:
-                while True:
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                print("[*] Stopping dashboard server...")
-                dashboard_process.terminate()
+        run_dashboard_mode(dashboard_process)
         return
 
     # Execute mode-specific logic
     if args.mode == "attack":
-        print(f"[*] Starting ARP spoofing attack against {args.target} via {args.gateway}")
-        print(f"[*] Using interface: {args.interface}")
-        try:
-            arp_spoof_attack(args.gateway, args.target, args.interface, args.duration)
-        except Exception as e:
-            print(f"[!] Error during attack: {e}")
-            traceback.print_exc()
-
+        run_attack_mode(args)
     elif args.mode == "defense":
-        try:
-            watchdog = ARPWatchdog(args.interface)
-
-            # Add trusted mappings if provided
-            if args.trusted:
-                for ip, mac in args.trusted:
-                    watchdog.add_trusted_mapping(ip, mac)
-            else:
-                # If no trusted mappings provided, let's add our own interface
-                my_ip = get_interface_ip(args.interface)
-                my_mac = get_interface_mac(args.interface)
-                if my_ip and my_mac:
-                    watchdog.add_trusted_mapping(my_ip, my_mac)
-                    print(f"[*] Added own interface as trusted: {my_ip} -> {my_mac}")
-
-            # Start monitoring
-            watchdog.start_monitoring(args.duration)
-
-            # After monitoring ends or is interrupted, print summary
-            alerts = watchdog.get_alerts()
-            if alerts:
-                print(f"\n[!] Detected {len(alerts)} potential ARP spoofing attempts:")
-                for alert in alerts:
-                    print(f"  - {alert['message']}")
-            else:
-                print("\n[✓] No ARP spoofing detected.")
-        except Exception as e:
-            print(f"[!] Error during defense mode: {e}")
-            traceback.print_exc()
+        run_defense_mode(args)
 
     # Clean up dashboard process if it was started
     if dashboard_process:

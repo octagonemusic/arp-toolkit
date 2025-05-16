@@ -1,8 +1,8 @@
-from scapy.all import ARP, Ether, srp, send, sendp
+from scapy.layers.l2 import ARP, Ether
+from scapy.all import srp, sendp
 import time
 import os
 import subprocess
-import sys
 
 # Try to import dashboard integration
 try:
@@ -12,6 +12,9 @@ try:
 except ImportError:
     DASHBOARD_AVAILABLE = False
     print("[-] Dashboard integration not available")
+    # Define set_attack_status as a no-op function when dashboard is not available
+    def set_attack_status(ongoing=False, attacker=None, target=None) -> bool:
+        return False
 
 def enable_ip_forwarding():
     """
@@ -26,7 +29,7 @@ def enable_ip_forwarding():
             if f.read().strip() == "1":
                 print("[+] IP forwarding enabled successfully")
                 return True
-    except Exception as e:
+    except Exception:
         pass
         
     try:
@@ -36,7 +39,7 @@ def enable_ip_forwarding():
         if "net.ipv4.ip_forward = 1" in result.stdout:
             print("[+] IP forwarding enabled with sysctl")
             return True
-    except Exception as e:
+    except Exception:
         pass
     
     # If we reach here, both methods failed
